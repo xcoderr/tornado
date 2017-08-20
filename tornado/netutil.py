@@ -16,7 +16,7 @@
 
 """Miscellaneous network utility code."""
 
-from __future__ import absolute_import, division, print_function, with_statement
+from __future__ import absolute_import, division, print_function
 
 import errno
 import os
@@ -95,6 +95,9 @@ else:
 # leading to deadlock. Avoid it by caching the idna encoder on the main
 # thread now.
 u'foo'.encode('idna')
+
+# For undiagnosed reasons, 'latin1' codec may also need to be preloaded.
+u'foo'.encode('latin1')
 
 # These errnos indicate that a non-blocking operation must be retried
 # at a later time.  On most platforms they're the same value, but on
@@ -197,6 +200,7 @@ def bind_sockets(port, address=None, family=socket.AF_UNSPEC,
         sockets.append(sock)
     return sockets
 
+
 if hasattr(socket, 'AF_UNIX'):
     def bind_unix_socket(file, mode=0o600, backlog=_DEFAULT_BACKLOG):
         """Creates a listening unix socket.
@@ -228,7 +232,7 @@ if hasattr(socket, 'AF_UNIX'):
         return sock
 
 
-def add_accept_handler(sock, callback, io_loop=None):
+def add_accept_handler(sock, callback):
     """Adds an `.IOLoop` event handler to accept new connections on ``sock``.
 
     When a connection is accepted, ``callback(connection, address)`` will
@@ -237,11 +241,17 @@ def add_accept_handler(sock, callback, io_loop=None):
     is different from the ``callback(fd, events)`` signature used for
     `.IOLoop` handlers.
 
-    .. versionchanged:: 4.1
-       The ``io_loop`` argument is deprecated.
+    A callable is returned which, when called, will remove the `.IOLoop`
+    event handler and stop processing further incoming connections.
+
+    .. versionchanged:: 5.0
+       The ``io_loop`` argument (deprecated since version 4.1) has been removed.
+
+    .. versionchanged:: 5.0
+       A callable is returned (``None`` was returned before).
     """
-    if io_loop is None:
-        io_loop = IOLoop.current()
+    io_loop = IOLoop.current()
+    removed = [False]
 
     def accept_handler(fd, events):
         # More connections may come in while we're handling callbacks;
@@ -256,6 +266,9 @@ def add_accept_handler(sock, callback, io_loop=None):
         # heuristic for the number of connections we can reasonably
         # accept at once.
         for i in xrange(_DEFAULT_BACKLOG):
+            if removed[0]:
+                # The socket was probably closed
+                return
             try:
                 connection, address = sock.accept()
             except socket.error as e:
@@ -269,8 +282,15 @@ def add_accept_handler(sock, callback, io_loop=None):
                 if errno_from_exception(e) == errno.ECONNABORTED:
                     continue
                 raise
+            set_close_exec(connection.fileno())
             callback(connection, address)
+
+    def remove_handler():
+        io_loop.remove_handler(sock)
+        removed[0] = True
+
     io_loop.add_handler(sock, accept_handler, IOLoop.READ)
+    return remove_handler
 
 
 def is_valid_ip(ip):
@@ -359,11 +379,11 @@ class ExecutorResolver(Resolver):
     ``close_resolver=False``; use this if you want to reuse the same
     executor elsewhere.
 
-    .. versionchanged:: 4.1
-       The ``io_loop`` argument is deprecated.
+    .. versionchanged:: 5.0
+       The ``io_loop`` argument (deprecated since version 4.1) has been removed.
     """
-    def initialize(self, io_loop=None, executor=None, close_executor=True):
-        self.io_loop = io_loop or IOLoop.current()
+    def initialize(self, executor=None, close_executor=True):
+        self.io_loop = IOLoop.current()
         if executor is not None:
             self.executor = executor
             self.close_executor = close_executor
@@ -396,8 +416,8 @@ class BlockingResolver(ExecutorResolver):
     The `.IOLoop` will be blocked during the resolution, although the
     callback will not be run until the next `.IOLoop` iteration.
     """
-    def initialize(self, io_loop=None):
-        super(BlockingResolver, self).initialize(io_loop=io_loop)
+    def initialize(self):
+        super(BlockingResolver, self).initialize()
 
 
 class ThreadedResolver(ExecutorResolver):
@@ -419,10 +439,10 @@ class ThreadedResolver(ExecutorResolver):
     _threadpool = None  # type: ignore
     _threadpool_pid = None  # type: int
 
-    def initialize(self, io_loop=None, num_threads=10):
+    def initialize(self, num_threads=10):
         threadpool = ThreadedResolver._create_threadpool(num_threads)
         super(ThreadedResolver, self).initialize(
-            io_loop=io_loop, executor=threadpool, close_executor=False)
+            executor=threadpool, close_executor=False)
 
     @classmethod
     def _create_threadpool(cls, num_threads):

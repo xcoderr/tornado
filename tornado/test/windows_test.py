@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function
 import functools
 import os
 import socket
@@ -6,6 +7,7 @@ import unittest
 from tornado.platform.auto import set_close_exec
 
 skipIfNonWindows = unittest.skipIf(os.name != 'nt', 'non-windows platform')
+
 
 @skipIfNonWindows
 class WindowsTest(unittest.TestCase):
@@ -19,7 +21,5 @@ class WindowsTest(unittest.TestCase):
         r, w = os.pipe()
         self.addCleanup(functools.partial(os.close, r))
         self.addCleanup(functools.partial(os.close, w))
-        with self.assertRaises(WindowsError) as cm:
+        with self.assertRaises(WindowsError):
             set_close_exec(r)
-        ERROR_INVALID_HANDLE = 6
-        self.assertEqual(cm.exception.winerror, ERROR_INVALID_HANDLE)

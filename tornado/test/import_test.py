@@ -1,5 +1,5 @@
 # flake8: noqa
-from __future__ import absolute_import, division, print_function, with_statement
+from __future__ import absolute_import, division, print_function
 from tornado.test.util import unittest
 
 
@@ -45,3 +45,9 @@ class ImportTest(unittest.TestCase):
             pass
         else:
             import tornado.curl_httpclient
+
+    def test_import_aliases(self):
+        # Ensure we don't delete formerly-documented aliases accidentally.
+        import tornado.ioloop, tornado.gen, tornado.util
+        self.assertIs(tornado.ioloop.TimeoutError, tornado.util.TimeoutError)
+        self.assertIs(tornado.gen.TimeoutError, tornado.util.TimeoutError)

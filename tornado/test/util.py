@@ -1,5 +1,6 @@
-from __future__ import absolute_import, division, print_function, with_statement
+from __future__ import absolute_import, division, print_function
 
+import contextlib
 import os
 import platform
 import socket
@@ -76,3 +77,33 @@ def exec_test(caller_globals, caller_locals, s):
     local_namespace = {}
     exec(textwrap.dedent(s), global_namespace, local_namespace)
     return local_namespace
+
+
+def is_coverage_running():
+    """Return whether coverage is currently running.
+    """
+    if 'coverage' not in sys.modules:
+        return False
+    tracer = sys.gettrace()
+    if tracer is None:
+        return False
+    try:
+        mod = tracer.__module__
+    except AttributeError:
+        try:
+            mod = tracer.__class__.__module__
+        except AttributeError:
+            return False
+    return mod.startswith('coverage')
+
+
+def subTest(test, *args, **kwargs):
+    """Compatibility shim for unittest.TestCase.subTest.
+
+    Usage: ``with tornado.test.util.subTest(self, x=x):``
+    """
+    try:
+        subTest = test.subTest  # py34+
+    except AttributeError:
+        subTest = contextlib.contextmanager(lambda *a, **kw: (yield))
+    return subTest(*args, **kwargs)

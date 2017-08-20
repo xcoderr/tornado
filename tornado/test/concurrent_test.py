@@ -13,8 +13,9 @@
 # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations
 # under the License.
-from __future__ import absolute_import, division, print_function, with_statement
+from __future__ import absolute_import, division, print_function
 
+import gc
 import logging
 import re
 import socket
@@ -24,10 +25,12 @@ import traceback
 from tornado.concurrent import Future, return_future, ReturnValueIgnoredError, run_on_executor
 from tornado.escape import utf8, to_unicode
 from tornado import gen
+from tornado.ioloop import IOLoop
 from tornado.iostream import IOStream
+from tornado.log import app_log
 from tornado import stack_context
 from tornado.tcpserver import TCPServer
-from tornado.testing import AsyncTestCase, LogTrapTestCase, bind_unused_port, gen_test
+from tornado.testing import AsyncTestCase, ExpectLog, bind_unused_port, gen_test
 from tornado.test.util import unittest
 
 
@@ -171,18 +174,36 @@ class ReturnFutureTest(AsyncTestCase):
             tb = traceback.extract_tb(sys.exc_info()[2])
             self.assertIn(self.expected_frame, tb)
 
+    @gen_test
+    def test_uncaught_exception_log(self):
+        @gen.coroutine
+        def f():
+            yield gen.moment
+            1 / 0
+
+        g = f()
+
+        with ExpectLog(app_log,
+                       "(?s)Future.* exception was never retrieved:"
+                       ".*ZeroDivisionError"):
+            yield gen.moment
+            yield gen.moment
+            del g
+            gc.collect()  # for PyPy
+
+
 # The following series of classes demonstrate and test various styles
 # of use, with and without generators and futures.
 
 
 class CapServer(TCPServer):
     def handle_stream(self, stream, address):
-        logging.info("handle_stream")
+        logging.debug("handle_stream")
         self.stream = stream
         self.stream.read_until(b"\n", self.handle_read)
 
     def handle_read(self, data):
-        logging.info("handle_read")
+        logging.debug("handle_read")
         data = to_unicode(data)
         if data == data.upper():
             self.stream.write(b"error\talready capitalized\n")
@@ -197,9 +218,8 @@ class CapError(Exception):
 
 
 class BaseCapClient(object):
-    def __init__(self, port, io_loop):
+    def __init__(self, port):
         self.port = port
-        self.io_loop = io_loop
 
     def process_response(self, data):
         status, message = re.match('(.*)\t(.*)\n', to_unicode(data)).groups()
@@ -211,9 +231,9 @@ class BaseCapClient(object):
 
 class ManualCapClient(BaseCapClient):
     def capitalize(self, request_data, callback=None):
-        logging.info("capitalize")
+        logging.debug("capitalize")
         self.request_data = request_data
-        self.stream = IOStream(socket.socket(), io_loop=self.io_loop)
+        self.stream = IOStream(socket.socket())
         self.stream.connect(('127.0.0.1', self.port),
                             callback=self.handle_connect)
         self.future = Future()
@@ -223,12 +243,12 @@ class ManualCapClient(BaseCapClient):
         return self.future
 
     def handle_connect(self):
-        logging.info("handle_connect")
+        logging.debug("handle_connect")
         self.stream.write(utf8(self.request_data + "\n"))
         self.stream.read_until(b'\n', callback=self.handle_read)
 
     def handle_read(self, data):
-        logging.info("handle_read")
+        logging.debug("handle_read")
         self.stream.close()
         try:
             self.future.set_result(self.process_response(data))
@@ -239,20 +259,20 @@ class ManualCapClient(BaseCapClient):
 class DecoratorCapClient(BaseCapClient):
     @return_future
     def capitalize(self, request_data, callback):
-        logging.info("capitalize")
+        logging.debug("capitalize")
         self.request_data = request_data
-        self.stream = IOStream(socket.socket(), io_loop=self.io_loop)
+        self.stream = IOStream(socket.socket())
         self.stream.connect(('127.0.0.1', self.port),
                             callback=self.handle_connect)
         self.callback = callback
 
     def handle_connect(self):
-        logging.info("handle_connect")
+        logging.debug("handle_connect")
         self.stream.write(utf8(self.request_data + "\n"))
         self.stream.read_until(b'\n', callback=self.handle_read)
 
     def handle_read(self, data):
-        logging.info("handle_read")
+        logging.debug("handle_read")
         self.stream.close()
         self.callback(self.process_response(data))
 
@@ -261,14 +281,14 @@ class GeneratorCapClient(BaseCapClient):
     @return_future
     @gen.engine
     def capitalize(self, request_data, callback):
-        logging.info('capitalize')
-        stream = IOStream(socket.socket(), io_loop=self.io_loop)
-        logging.info('connecting')
+        logging.debug('capitalize')
+        stream = IOStream(socket.socket())
+        logging.debug('connecting')
         yield gen.Task(stream.connect, ('127.0.0.1', self.port))
         stream.write(utf8(request_data + '\n'))
-        logging.info('reading')
+        logging.debug('reading')
         data = yield gen.Task(stream.read_until, b'\n')
-        logging.info('returning')
+        logging.debug('returning')
         stream.close()
         callback(self.process_response(data))
 
@@ -276,10 +296,10 @@ class GeneratorCapClient(BaseCapClient):
 class ClientTestMixin(object):
     def setUp(self):
         super(ClientTestMixin, self).setUp()  # type: ignore
-        self.server = CapServer(io_loop=self.io_loop)
+        self.server = CapServer()
         sock, port = bind_unused_port()
         self.server.add_sockets([sock])
-        self.client = self.client_class(io_loop=self.io_loop, port=port)
+        self.client = self.client_class(port=port)
 
     def tearDown(self):
         self.server.stop()
@@ -325,15 +345,15 @@ class ClientTestMixin(object):
         self.wait()
 
 
-class ManualClientTest(ClientTestMixin, AsyncTestCase, LogTrapTestCase):
+class ManualClientTest(ClientTestMixin, AsyncTestCase):
     client_class = ManualCapClient
 
 
-class DecoratorClientTest(ClientTestMixin, AsyncTestCase, LogTrapTestCase):
+class DecoratorClientTest(ClientTestMixin, AsyncTestCase):
     client_class = DecoratorCapClient
 
 
-class GeneratorClientTest(ClientTestMixin, AsyncTestCase, LogTrapTestCase):
+class GeneratorClientTest(ClientTestMixin, AsyncTestCase):
     client_class = GeneratorCapClient
 
 
@@ -342,74 +362,41 @@ class RunOnExecutorTest(AsyncTestCase):
     @gen_test
     def test_no_calling(self):
         class Object(object):
-            def __init__(self, io_loop):
-                self.io_loop = io_loop
+            def __init__(self):
                 self.executor = futures.thread.ThreadPoolExecutor(1)
 
             @run_on_executor
             def f(self):
                 return 42
 
-        o = Object(io_loop=self.io_loop)
+        o = Object()
         answer = yield o.f()
         self.assertEqual(answer, 42)
 
     @gen_test
     def test_call_with_no_args(self):
         class Object(object):
-            def __init__(self, io_loop):
-                self.io_loop = io_loop
+            def __init__(self):
                 self.executor = futures.thread.ThreadPoolExecutor(1)
 
             @run_on_executor()
             def f(self):
                 return 42
 
-        o = Object(io_loop=self.io_loop)
-        answer = yield o.f()
-        self.assertEqual(answer, 42)
-
-    @gen_test
-    def test_call_with_io_loop(self):
-        class Object(object):
-            def __init__(self, io_loop):
-                self._io_loop = io_loop
-                self.executor = futures.thread.ThreadPoolExecutor(1)
-
-            @run_on_executor(io_loop='_io_loop')
-            def f(self):
-                return 42
-
-        o = Object(io_loop=self.io_loop)
+        o = Object()
         answer = yield o.f()
         self.assertEqual(answer, 42)
 
     @gen_test
     def test_call_with_executor(self):
         class Object(object):
-            def __init__(self, io_loop):
-                self.io_loop = io_loop
+            def __init__(self):
                 self.__executor = futures.thread.ThreadPoolExecutor(1)
 
             @run_on_executor(executor='_Object__executor')
             def f(self):
                 return 42
 
-        o = Object(io_loop=self.io_loop)
-        answer = yield o.f()
-        self.assertEqual(answer, 42)
-
-    @gen_test
-    def test_call_with_both(self):
-        class Object(object):
-            def __init__(self, io_loop):
-                self._io_loop = io_loop
-                self.__executor = futures.thread.ThreadPoolExecutor(1)
-
-            @run_on_executor(io_loop='_io_loop', executor='_Object__executor')
-            def f(self):
-                return 42
-
-        o = Object(io_loop=self.io_loop)
+        o = Object()
         answer = yield o.f()
         self.assertEqual(answer, 42)

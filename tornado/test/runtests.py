@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from __future__ import absolute_import, division, print_function, with_statement
+from __future__ import absolute_import, division, print_function
 import gc
 import locale  # system locale module, not tornado.locale
 import logging
@@ -25,6 +25,7 @@ TEST_MODULES = [
     'tornado.util.doctests',
     'tornado.test.asyncio_test',
     'tornado.test.auth_test',
+    'tornado.test.autoreload_test',
     'tornado.test.concurrent_test',
     'tornado.test.curl_httpclient_test',
     'tornado.test.escape_test',
@@ -43,6 +44,7 @@ TEST_MODULES = [
     'tornado.test.options_test',
     'tornado.test.process_test',
     'tornado.test.queues_test',
+    'tornado.test.routing_test',
     'tornado.test.simple_httpclient_test',
     'tornado.test.stack_context_test',
     'tornado.test.tcpclient_test',
@@ -79,13 +81,15 @@ class LogCounter(logging.Filter):
     def __init__(self, *args, **kwargs):
         # Can't use super() because logging.Filter is an old-style class in py26
         logging.Filter.__init__(self, *args, **kwargs)
-        self.warning_count = self.error_count = 0
+        self.info_count = self.warning_count = self.error_count = 0
 
     def filter(self, record):
         if record.levelno >= logging.ERROR:
             self.error_count += 1
         elif record.levelno >= logging.WARNING:
             self.warning_count += 1
+        elif record.levelno >= logging.INFO:
+            self.info_count += 1
         return True
 
 
@@ -124,6 +128,9 @@ def main():
     # The __aiter__ protocol changed in python 3.5.2.
     # Silence the warning until we can drop 3.5.[01].
     warnings.filterwarnings("ignore", category=PendingDeprecationWarning,
+                            message=".*legacy __aiter__ protocol")
+    # 3.5.2's PendingDeprecationWarning became a DeprecationWarning in 3.6.
+    warnings.filterwarnings("ignore", category=DeprecationWarning,
                             message=".*legacy __aiter__ protocol")
 
     logging.getLogger("tornado.access").setLevel(logging.CRITICAL)
@@ -173,13 +180,17 @@ def main():
     try:
         tornado.testing.main(**kwargs)
     finally:
-        # The tests should run clean; consider it a failure if they logged
-        # any warnings or errors. We'd like to ban info logs too, but
-        # we can't count them cleanly due to interactions with LogTrapTestCase.
-        if log_counter.warning_count > 0 or log_counter.error_count > 0:
-            logging.error("logged %d warnings and %d errors",
-                          log_counter.warning_count, log_counter.error_count)
+        # The tests should run clean; consider it a failure if they
+        # logged anything at info level or above (except for the one
+        # allowed info message "PASS")
+        if (log_counter.info_count > 1 or
+            log_counter.warning_count > 0 or
+            log_counter.error_count > 0):
+            logging.error("logged %d infos, %d warnings, and %d errors",
+                          log_counter.info_count, log_counter.warning_count,
+                          log_counter.error_count)
             sys.exit(1)
+
 
 if __name__ == '__main__':
     main()

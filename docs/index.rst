@@ -20,13 +20,11 @@ applications that require a long-lived connection to each user.
 Quick links
 -----------
 
-* |Download current version|: :current_tarball:`z` (:doc:`release notes <releases>`)
+* Current version: |version| (`download from PyPI <https://pypi.python.org/pypi/tornado>`_, :doc:`release notes <releases>`)
 * `Source (github) <https://github.com/tornadoweb/tornado>`_
 * Mailing lists: `discussion <http://groups.google.com/group/python-tornado>`_ and `announcements <http://groups.google.com/group/python-tornado-announce>`_
 * `Stack Overflow <http://stackoverflow.com/questions/tagged/tornado>`_
 * `Wiki <https://github.com/tornadoweb/tornado/wiki/Links>`_
-
-.. |Download current version| replace:: Download version |version|
 
 Hello, world
 ------------
@@ -57,29 +55,18 @@ that see this `simple chat room
 Installation
 ------------
 
-**Automatic installation**::
+::
 
     pip install tornado
 
 Tornado is listed in `PyPI <http://pypi.python.org/pypi/tornado>`_ and
-can be installed with ``pip`` or ``easy_install``.  Note that the
-source distribution includes demo applications that are not present
-when Tornado is installed in this way, so you may wish to download a
-copy of the source tarball as well.
+can be installed with ``pip``. Note that the source distribution
+includes demo applications that are not present when Tornado is
+installed in this way, so you may wish to download a copy of the
+source tarball or clone the `git repository
+<https://github.com/tornadoweb/tornado>`_ as well.
 
-**Manual installation**: Download :current_tarball:`z`:
-
-.. parsed-literal::
-
-    tar xvzf tornado-|version|.tar.gz
-    cd tornado-|version|
-    python setup.py build
-    sudo python setup.py install
-
-The Tornado source code is `hosted on GitHub
-<https://github.com/tornadoweb/tornado>`_.
-
-**Prerequisites**: Tornado 4.3 runs on Python 2.7, and 3.3+
+**Prerequisites**: Tornado runs on Python 2.7, and 3.3+
 For Python 2, version 2.7.9 or newer is *strongly*
 recommended for the improved SSL support. In addition to the requirements
 which will be installed automatically by ``pip`` or ``setup.py install``,
@@ -90,8 +77,7 @@ the following optional packages may be useful:
   `~tornado.netutil.ThreadedResolver`.  It is needed only on Python 2;
   Python 3 includes this package in the standard library.
 * `pycurl <http://pycurl.sourceforge.net>`_ is used by the optional
-  ``tornado.curl_httpclient``.  Libcurl version 7.19.3.1 or higher is required;
-  version 7.21.1 or higher is recommended.
+  ``tornado.curl_httpclient``.  Libcurl version 7.22 or higher is required.
 * `Twisted <http://www.twistedmatrix.com>`_ may be used with the classes in
   `tornado.platform.twisted`.
 * `pycares <https://pypi.python.org/pypi/pycares>`_ is an alternative
@@ -109,7 +95,9 @@ and BSD (with ``kqueue``) are recommended for production deployment
 networking performance is generally poor so it is recommended only for
 development use).  Tornado will also run on Windows, although this
 configuration is not officially supported and is recommended only for
-development use.
+development use. Without reworking Tornado IOLoop interface, it's not
+possible to add a native Tornado Windows IOLoop implementation or
+leverage Windows' IOCP support from frameworks like AsyncIO or Twisted.
 
 Documentation
 -------------

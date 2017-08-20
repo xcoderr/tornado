@@ -21,7 +21,6 @@
    .. autoexception:: Return
 
    .. autofunction:: with_timeout
-   .. autoexception:: TimeoutError
 
    .. autofunction:: sleep
 
@@ -49,6 +48,8 @@
    .. autofunction:: convert_yielded
 
    .. autofunction:: maybe_future
+
+   .. autofunction:: is_coroutine_function
 
    Legacy interface
    ----------------

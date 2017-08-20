@@ -1,4 +1,4 @@
-from __future__ import absolute_import, division, print_function, with_statement
+from __future__ import absolute_import, division, print_function
 
 import gc
 import contextlib
@@ -25,6 +25,7 @@ try:
     from concurrent import futures
 except ImportError:
     futures = None
+
 
 class GenEngineTest(AsyncTestCase):
     def setUp(self):
@@ -275,6 +276,13 @@ class GenEngineTest(AsyncTestCase):
         except gen.LeakedCallbackError:
             pass
         self.orphaned_callback()
+
+    def test_none(self):
+        @gen.engine
+        def f():
+            yield None
+            self.stop()
+        self.run_gen(f)
 
     def test_multi(self):
         @gen.engine
@@ -657,6 +665,28 @@ class GenCoroutineTest(AsyncTestCase):
         super(GenCoroutineTest, self).tearDown()
         assert self.finished
 
+    def test_attributes(self):
+        self.finished = True
+
+        def f():
+            yield gen.moment
+
+        coro = gen.coroutine(f)
+        self.assertEqual(coro.__name__, f.__name__)
+        self.assertEqual(coro.__module__, f.__module__)
+        self.assertIs(coro.__wrapped__, f)
+
+    def test_is_coroutine_function(self):
+        self.finished = True
+
+        def f():
+            yield gen.moment
+
+        coro = gen.coroutine(f)
+        self.assertFalse(gen.is_coroutine_function(f))
+        self.assertTrue(gen.is_coroutine_function(coro))
+        self.assertFalse(gen.is_coroutine_function(coro()))
+
     @gen_test
     def test_sync_gen_return(self):
         @gen.coroutine
@@ -724,6 +754,21 @@ class GenCoroutineTest(AsyncTestCase):
         namespace = exec_test(globals(), locals(), """
         async def f():
             await gen.Task(self.io_loop.add_callback)
+            return 42
+        """)
+        result = yield namespace['f']()
+        self.assertEqual(result, 42)
+        self.finished = True
+
+    @skipBefore35
+    @gen_test
+    def test_asyncio_sleep_zero(self):
+        # asyncio.sleep(0) turns into a special case (equivalent to
+        # `yield None`)
+        namespace = exec_test(globals(), locals(), """
+        async def f():
+            import asyncio
+            await asyncio.sleep(0)
             return 42
         """)
         result = yield namespace['f']()
@@ -970,6 +1015,31 @@ class GenCoroutineTest(AsyncTestCase):
 
         self.finished = True
 
+    @skipNotCPython
+    def test_coroutine_refcounting(self):
+        # On CPython, tasks and their arguments should be released immediately
+        # without waiting for garbage collection.
+        @gen.coroutine
+        def inner():
+            class Foo(object):
+                pass
+            local_var = Foo()
+            self.local_ref = weakref.ref(local_var)
+            yield gen.coroutine(lambda: None)()
+            raise ValueError('Some error')
+
+        @gen.coroutine
+        def inner2():
+            try:
+                yield inner()
+            except ValueError:
+                pass
+
+        self.io_loop.run_sync(inner2, timeout=3)
+
+        self.assertIs(self.local_ref(), None)
+        self.finished = True
+
 
 class GenSequenceHandler(RequestHandler):
     @asynchronous
@@ -1026,8 +1096,7 @@ class GenTaskHandler(RequestHandler):
     @asynchronous
     @gen.engine
     def get(self):
-        io_loop = self.request.connection.stream.io_loop
-        client = AsyncHTTPClient(io_loop=io_loop)
+        client = AsyncHTTPClient()
         response = yield gen.Task(client.fetch, self.get_argument('url'))
         response.rethrow()
         self.finish(b"got response: " + response.body)
@@ -1180,7 +1249,7 @@ class WithTimeoutTest(AsyncTestCase):
         self.io_loop.add_timeout(datetime.timedelta(seconds=0.1),
                                  lambda: future.set_result('asdf'))
         result = yield gen.with_timeout(datetime.timedelta(seconds=3600),
-                                        future, io_loop=self.io_loop)
+                                        future)
         self.assertEqual(result, 'asdf')
 
     @gen_test
@@ -1191,14 +1260,14 @@ class WithTimeoutTest(AsyncTestCase):
             lambda: future.set_exception(ZeroDivisionError()))
         with self.assertRaises(ZeroDivisionError):
             yield gen.with_timeout(datetime.timedelta(seconds=3600),
-                                   future, io_loop=self.io_loop)
+                                   future)
 
     @gen_test
     def test_already_resolved(self):
         future = Future()
         future.set_result('asdf')
         result = yield gen.with_timeout(datetime.timedelta(seconds=3600),
-                                        future, io_loop=self.io_loop)
+                                        future)
         self.assertEqual(result, 'asdf')
 
     @unittest.skipIf(futures is None, 'futures module not present')
@@ -1375,6 +1444,7 @@ class RunnerGCTest(AsyncTestCase):
         """Runners shouldn't GC if future is alive"""
         # Create the weakref
         weakref_scope = [None]
+
         def callback():
             gc.collect(2)
             weakref_scope[0]().set_result(123)
@@ -1390,6 +1460,7 @@ class RunnerGCTest(AsyncTestCase):
             datetime.timedelta(seconds=0.2),
             tester()
         )
+
 
 if __name__ == '__main__':
     unittest.main()
